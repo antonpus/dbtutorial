@@ -64,6 +64,13 @@ struct Table_t {
 };
 typedef struct Table_t Table;
 
+struct Cursor_t {
+    Table *table;
+    uint32_t row_num;
+    bool end_of_file;
+};
+typedef struct Cursor_t Cursor;
+
 #define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
 
 const uint32_t ID_SIZE = size_of_attribute(Row, id);
@@ -122,36 +129,70 @@ void *get_page(Pager *pager, uint32_t page_num) {
     return pager->pages[page_num];
 }
 
-void *row_slot(Table *table, int row_num) {
+Cursor *table_start(Table *table) {
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->row_num = 0;
+    cursor->end_of_file = (table->num_rows == 0);
+    return cursor;
+}
+
+Cursor *table_end(Table *table) {
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->row_num = table->num_rows;
+    cursor->end_of_file = true;
+    return cursor;
+}
+
+void *cursor_current_value(Cursor *cursor) {
+    uint32_t row_num = cursor->row_num;
     uint32_t page_num = row_num / ROWS_PER_PAGE;
 
-    void *page = get_page(table->pager, page_num);
+    void *page = get_page(cursor->table->pager, page_num);
 
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
     return page + byte_offset;
 }
 
+void cursor_advance(Cursor *cursor) {
+    cursor->row_num++;
+    if (cursor->row_num == cursor->table->num_rows) {
+        cursor->end_of_file = true;
+    }
+}
+
 ExecuteResult execute_insert(Statement *statement, Table *table) {
     if (table->num_rows >= TABLE_MAX_ROWS) {
         return EXECUTE_TABLE_FULL;
     }
-    serialize_row(&(statement->row_to_insert), row_slot(table, table->num_rows));
+
+    Cursor *cursor = table_end(table);
+
+    serialize_row(&(statement->row_to_insert), cursor_current_value(cursor));
     table->num_rows++;
 
     print_row(&(statement->row_to_insert));
     printf("\nInserted.\n");
 
+    free(cursor);
     return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_select(Statement *statement, Table *table) {
     Row row;
-    for (uint32_t i = 0; i < table->num_rows; i++) {
-        deserialize_row(row_slot(table, i), &row);
+    Cursor *cursor = table_start(table);
+    while (!(cursor->end_of_file)) {
+        deserialize_row(cursor_current_value(cursor), &row);
+        cursor_advance(cursor);
+
         print_row(&row);
     }
+
     printf("%d rows selected.\n", table->num_rows);
+
+    free(cursor);
     return EXECUTE_SUCCESS;
 }
 
@@ -335,8 +376,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    char *filename = argv[1];
-    Table *table = db_open(filename);
+    char *db_filename = argv[1];
+    Table *table = db_open(db_filename);
 
     InputBuffer *input_buffer = new_input_buffer();
 
