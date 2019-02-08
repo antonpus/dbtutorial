@@ -16,10 +16,10 @@ int main(int argc, char *argv[]) {
         print_prompt();
         read_input(input_buffer);
 
-        if (is_meta_command_in_buffer(input_buffer)) {
+         if (is_meta_command_in_buffer(input_buffer)) {
             do_meta_command(input_buffer, table);
         } else {
             do_sql_command(input_buffer, table);
-        }
+         }
     }
 }

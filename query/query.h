@@ -1,4 +1,3 @@
-#include <string.h>
 #include "../storage/storage.h"
 
 struct InputBuffer_t {

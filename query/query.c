@@ -21,13 +21,21 @@ typedef enum StatementType_t StatementType;
 
 struct Statement_t {
     StatementType type;
-    //check with pointer as Row *row_to_insert
     Row row_to_insert;
 };
 typedef struct Statement_t Statement;
 
 void print_prompt() {
     printf("db >");
+}
+
+void print_leaf_node(void* node) {
+    uint32_t num_cells = *get_node_cells_number(node);
+    printf("leaf (size %d)\n", num_cells);
+    for (uint32_t i = 0; i < num_cells; i++) {
+        uint32_t key = *((uint32_t*) leaf_node_key(node, i));
+        printf("  - %d : %d\n", i, key);
+    }
 }
 
 void print_row(Row* row) {
@@ -71,20 +79,23 @@ void do_meta_command(InputBuffer *input_buffer, Table* table) {
     if (strcmp(input_buffer->buffer, ".exit") == 0) {
         db_close(table);
         exit(EXIT_SUCCESS);
-    } else {
+    } else if (strcmp(input_buffer->buffer, ".btree") == 0) {
+        printf("Tree:\n");
+        print_leaf_node(get_page(table->pager, 0));
+   } else {
         printf("Unrecognized command '%s'.\n", input_buffer->buffer);
     }
 }
 
 ExecuteResult execute_insert(Statement *statement, Table *table) {
-    if (table->num_rows >= TABLE_MAX_ROWS) {
+    void* node = get_page(table->pager, table->root_page_num);
+    if ((*get_node_cells_number(node) >= LEAF_NODE_MAX_CELLS)) {
         return EXECUTE_TABLE_FULL;
     }
 
     Cursor *cursor = table_end(table);
 
-    serialize_row(&(statement->row_to_insert), cursor_current_value(cursor));
-    table->num_rows++;
+    leaf_node_insert(cursor, statement->row_to_insert.id, &(statement->row_to_insert));
 
     print_row(&(statement->row_to_insert));
     printf("\nInserted.\n");
@@ -102,8 +113,6 @@ ExecuteResult execute_select(Statement *statement, Table *table) {
 
         print_row(&row);
     }
-
-    printf("%d rows selected.\n", table->num_rows);
 
     free(cursor);
     return EXECUTE_SUCCESS;
@@ -146,7 +155,6 @@ void do_sql_command(InputBuffer *input_buffer, Table *table) {
                     break;
             }
             break;
-
         case (PREPARE_SYNTAX_ERROR):
             printf("Syntax error. Could not parse statement.\n");
             break;
