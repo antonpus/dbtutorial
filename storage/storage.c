@@ -16,32 +16,99 @@ void *leaf_node_value(void *node, uint32_t cell_num) {
     return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
 }
 
+NodeType get_node_type(void *node) {
+    uint8_t value = *((uint8_t*)(node + NODE_TYPE_OFFSET));
+    return (NodeType)value;
+}
+
+void set_node_type(void* node, NodeType type) {
+    uint8_t value = type;
+    *((uint8_t*)(node + NODE_TYPE_OFFSET)) = value;
+}
+
 void initialize_leaf_node(void *node) {
+    set_node_type(node, NODE_LEAF);
     *get_node_cells_number(node) = 0;
 }
 
 void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value) {
     void *node = get_page(cursor->table->pager, cursor->page_num);
 
-    uint32_t cells_number = *get_node_cells_number(node);
+    uint32_t total_cells_number = *get_node_cells_number(node);
 
-    if (cells_number >= LEAF_NODE_MAX_CELLS) {
+    if (total_cells_number >= LEAF_NODE_MAX_CELLS) {
         printf("Need to implement splitting of a leaf node.\n");
         exit(EXIT_FAILURE);
     }
 
-    //why do we need this? maybe just insert into next page's cell?
-    if (cursor->cell_num < cells_number) {
-        for (uint32_t i = cells_number; i > cursor->cell_num; i--) {
-            memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1),
-                 LEAF_NODE_CELL_SIZE);
+    //shift array to insert a cell_
+    if (cursor->cell_num < total_cells_number) {
+        for (uint32_t i = total_cells_number; i > cursor->cell_num; i--) {
+            memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1), LEAF_NODE_CELL_SIZE);
         }
     }
 
     *(get_node_cells_number(node))+=1;
-    *((uint32_t*) leaf_node_key(node, cursor->cell_num)) = key;
 
-    memcpy(leaf_node_value(node, cursor->cell_num), value, LEAF_NODE_CELL_SIZE);
+    printf("cursor->cell_num=%d\n",cursor->cell_num);
+
+    *((uint32_t*) leaf_node_key(node, cursor->cell_num)) = key;
+    memcpy(leaf_node_value(node, cursor->cell_num), value, LEAF_NODE_VALUE_SIZE);
+}
+
+uint32_t find_cell_num_to_insert_into(void *node, uint32_t start, uint32_t end, uint32_t key_to_insert) {
+    printf("===============\n");
+    if (start == end) {
+        uint32_t current_key = *((uint32_t*) leaf_node_key(node, start));
+        if (key_to_insert < current_key) {
+            printf("return=%d\n", start);
+            return start;
+        } else {
+            printf("return=%d\n", start +1);
+
+            return start + 1;
+        }
+    } else {
+        uint32_t mid = start + (end - start)/2;
+        uint32_t mid_key = *((uint32_t*) leaf_node_key(node, mid));
+
+                printf("mid=%d\n", mid);
+                printf("mid_key=%d\n", mid_key);
+
+
+
+        if (key_to_insert == mid_key) {
+                        printf("return=%d\n", mid + 1);
+
+            return mid + 1;
+        } else if (key_to_insert < mid_key) {
+            return find_cell_num_to_insert_into(node, start, mid, key_to_insert);
+        } else if (key_to_insert > mid_key) {
+            return find_cell_num_to_insert_into(node, mid + 1, end, key_to_insert);
+        }
+    }
+}
+
+Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key) {
+    void *node = get_page(table->pager, page_num);
+    uint32_t total_cells_num = *get_node_cells_number(node);
+
+    uint32_t cell_num_to_insert;
+    bool end_of_file;
+    if (total_cells_num == 0) {
+        cell_num_to_insert = 0;
+        end_of_file = true;
+    } else {
+        cell_num_to_insert = find_cell_num_to_insert_into(node, 0, total_cells_num - 1, key);
+        end_of_file = cell_num_to_insert == total_cells_num;
+    }
+
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->page_num = page_num;
+    cursor->cell_num = cell_num_to_insert;
+    cursor->end_of_file = end_of_file;
+    return cursor;
 }
 
 void *get_page(Pager *pager, uint32_t page_num) {
@@ -72,8 +139,8 @@ void *get_page(Pager *pager, uint32_t page_num) {
         }
         pager->pages[page_num] = page;
         
-        if (page_num >= pager->num_pages) {
-            pager->num_pages = page_num + 1;
+        if (page_num >= pager->total_pages_num) {
+            pager->total_pages_num = page_num + 1;
         }
     }
     return pager->pages[page_num];
@@ -91,16 +158,14 @@ Cursor *table_start(Table *table) {
     return cursor;
 }
 
-Cursor *table_end(Table *table) {
-    Cursor *cursor = malloc(sizeof(Cursor));
-    cursor->table = table;
-    cursor->page_num = table->root_page_num;
-
+Cursor *table_find(Table *table, uint32_t key) {
     void *root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = *get_node_cells_number(root_node);
-    cursor->cell_num = num_cells;
-    cursor->end_of_file = true;
-    return cursor;
+    if (get_node_type(root_node) == NODE_LEAF) {
+        return leaf_node_find(table, table->root_page_num, key);
+    } else {
+        printf("Need to implement searching through internal nodes\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void *cursor_current_value(Cursor *cursor) {
@@ -137,7 +202,7 @@ Pager *pager_open(const char *file_name) {
     Pager *pager = malloc(sizeof(Pager));
     pager->file_descriptor = file_descr;
     pager->file_lenght = file_lenght;
-    pager->num_pages = file_lenght / PAGE_SIZE;
+    pager->total_pages_num = file_lenght / PAGE_SIZE;
 
     if (file_lenght % PAGE_SIZE != 0) {
         printf("Db file has not a whole number of pages. Corrupted file.\n");
@@ -156,7 +221,7 @@ Table *db_open(const char *file_name) {
     table->pager = pager;
     table->root_page_num = 0;
 
-    if (pager->num_pages == 0) {
+    if (pager->total_pages_num == 0) {
         void *root_node = get_page(pager, 0);
         initialize_leaf_node(root_node);
     }
@@ -188,7 +253,7 @@ void pager_flush(Pager *pager, uint32_t page_num) {
 void db_close(Table* table) {
     Pager *pager = table->pager;
 
-    for (int i = 0; i < pager->num_pages; i++) {
+    for (int i = 0; i < pager->total_pages_num; i++) {
         void *page = pager->pages[i];
         if (page != NULL) {
             pager_flush(pager, i);

@@ -2,7 +2,8 @@
 
 enum ExecuteResult_t {
     EXECUTE_SUCCESS,
-    EXECUTE_TABLE_FULL 
+    EXECUTE_TABLE_FULL,
+    EXECUTE_DUPLICATE_KEY
 };
 typedef enum ExecuteResult_t ExecuteResult;
 
@@ -89,11 +90,20 @@ void do_meta_command(InputBuffer *input_buffer, Table* table) {
 
 ExecuteResult execute_insert(Statement *statement, Table *table) {
     void* node = get_page(table->pager, table->root_page_num);
-    if ((*get_node_cells_number(node) >= LEAF_NODE_MAX_CELLS)) {
+    uint32_t total_cells_num = *get_node_cells_number(node);
+    if (total_cells_num >= LEAF_NODE_MAX_CELLS) {
         return EXECUTE_TABLE_FULL;
     }
 
-    Cursor *cursor = table_end(table);
+    uint32_t key_to_insert = statement->row_to_insert.id;
+    Cursor *cursor = table_find(table, key_to_insert);
+
+    if (cursor->cell_num < total_cells_num) {
+        uint32_t existing_key = *((uint32_t*) leaf_node_key(node, cursor->cell_num));
+        if (existing_key == key_to_insert) {
+            return EXECUTE_DUPLICATE_KEY;
+        }
+    }
 
     leaf_node_insert(cursor, statement->row_to_insert.id, &(statement->row_to_insert));
 
@@ -152,6 +162,9 @@ void do_sql_command(InputBuffer *input_buffer, Table *table) {
                     break;
                 case (EXECUTE_TABLE_FULL):
                     printf("Error: Table full.\n");
+                    break;
+                case (EXECUTE_DUPLICATE_KEY):
+                    printf("Error: Key you want to insert already exists.\n");
                     break;
             }
             break;

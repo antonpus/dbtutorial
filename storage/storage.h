@@ -36,7 +36,7 @@ static const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 struct Pager_t {
     int file_descriptor;
     uint32_t file_lenght;
-    uint32_t num_pages;
+    uint32_t total_pages_num;
     void *pages[TABLE_MAX_PAGES];
 };
 typedef struct Pager_t Pager;
@@ -91,7 +91,7 @@ Table *db_open(const char *file_name);
 
 void db_close(Table* table);
 
-Cursor *table_end(Table *table);
+Cursor *table_find(Table *table, uint32_t key);
 
 Cursor *table_start(Table *table);
 
